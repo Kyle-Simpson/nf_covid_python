@@ -8,9 +8,8 @@
 '''
 # Import packages
 import getpass, sys, yaml
-import pandas as pd
 
-nf_repo = '/ihme/code/nfrqe/nf_covid/'
+nf_repo = ''
 
 
 def clean_filepath(path):
@@ -23,9 +22,9 @@ def clean_filepath(path):
         raise TypeError('Supplied path is not a string.')
 
     if '[mnt]' in path:
-        path = path.replace('[mnt]', '/mnt/team/nfrqe/')
+        path = path.replace('[mnt]', '')
     if '[share]' in path:
-        path = path.replace('[share]', '/ihme/')
+        path = path.replace('[share]', '')
     if '[hsp_icu_input_date]' in path:
         path = path.replace('[hsp_icu_input_date]', get_core_ref('hsp_icu_input_date'))
     if '[infect_death_input_date]' in path:
@@ -58,7 +57,7 @@ def get_core_ref(param_name, sub_key=None):
         ref = refs[param_name][sub_key]
 
     # Clean filepath
-    if '[' in str(ref):
+    if ('[' in str(ref)) & (param_name != 'age_group_ids'):
         ref = clean_filepath(ref)
 
     return(ref)
@@ -70,35 +69,62 @@ def set_roots():
     Arguments:
         None
     '''
-    roots = {'j' : '', 'h' : '', 'k' : '', 'share' : '', 'nf_repo' : '', 
-             'mnt' : '', 'hsp_icu_input_path' : '', 'infect_death_input_path' : '', 
-             'jobmon_logs_base' : '', 'gbd_round' : '', 'decomp_step' : ''}
+    roots = {
+             # Base paths
+             'j' : '', 
+             'h' : '', 
+             'k' : '', 
+             'share' : '', 
+             'mnt' : '/mnt/team/nfrqe/', 
+             'nf_repo' : nf_repo, 
+             # Specific paths
+             'hsp_icu_input_path' : get_core_ref('hsp_icu_input_path'), 
+             'infect_death_input_path' : get_core_ref('infect_death_input_path'), 
+             'age_sex_specific_input_path' : get_core_ref('age_sex_specific_input_path'),
+             'disability_weight' : get_core_ref('disability_weight_path'),
+             'jobmon_logs_base' : get_core_ref('jobmon_logs_base'), 
+             # GBD stuff
+             'gbd_round' : get_core_ref('gbd_round_id'), 
+             'gbd_year' : get_core_ref('gbd_year'),
+             'decomp_step' : get_core_ref('decomp_step'),
+             'age_groups' : get_core_ref('age_group_ids'),
+             # Default multipliers and date lags
+             'defaults' : {'prop_asymp' : get_core_ref('prop_asymp'),
+                           'asymp_duration' : get_core_ref('asymp_duration'),
+                           'incubation_period' : get_core_ref('incubation_period'),
+                           'midmod_duration_no_hsp' : get_core_ref('midmod_duration_no_hsp'),
+                           'infect_to_hsp_admit_duration' : get_core_ref('infect_to_hsp_admit_duration'),
+                           'symp_to_hsp_admit_duration' : get_core_ref('symp_to_hsp_admit_duration'),
+                           'prop_mild' : get_core_ref('prop_mild'),
+                           'prop_mod' : get_core_ref('prop_mod'),
+                           'icu_to_death_duration' : get_core_ref('icu_to_death_duration'),
+                           'hsp_death_duration' : get_core_ref('hsp_death_duration'),
+                           'hsp_no_icu_no_death_duration' : get_core_ref('hsp_no_icu_no_death_duration'),
+                           'hsp_no_icu_death_duration' : get_core_ref('hsp_no_icu_death_duration'),
+                           'hsp_icu_no_death_duration' : get_core_ref('hsp_icu_no_death_duration'),
+                           'hsp_icu_death_duration' : get_core_ref('hsp_icu_death_duration'),
+                           'icu_no_death_duration' : get_core_ref('icu_no_death_duration'),
+                           'hsp_midmod_after_discharge_duration' : get_core_ref('hsp_midmod_after_discharge_duration'),
+                           'icu_midmod_after_discharge_duration' : get_core_ref('icu_midmod_after_discharge_duration'),
+                           'prop_deaths_icu' : get_core_ref('prop_deaths_icu'),
+                           'mild_hhseqid' : get_core_ref('mild_hhseqid'),
+                           'moderate_hhseqid' : get_core_ref('moderate_hhseqid'),
+                           'severe_hhseqid' : get_core_ref('severe_hhseqid'),
+                           'icu_hhseqid' : get_core_ref('icu_hhseqid')
+                           }
+            }
 
     if sys.platform.lower() == 'linux':
-        roots['j'] = '/home/j/'
-        roots['h'] = '/ihme/homes/{}/'.format(getpass.getuser())
-        roots['k'] = '/ihme/cc_resources/'
-        roots['share'] = '/ihme/'
+        roots['j'] = ''
+        roots['h'] = ''
+        roots['k'] = ''
+        roots['share'] = ''
     elif 'win' in sys.platform.lower():
-        roots['j'] = 'J:/'
-        roots['h'] = 'H:/'
-        roots['k'] = 'K:/'
-    
-    roots['nf_repo'] = nf_repo
-    roots['mnt'] = '/mnt/team/nfrqe/'
-    roots['hsp_icu_input_path'] = get_core_ref('hsp_icu_input_path')
-    roots['infect_death_input_path'] = get_core_ref('infect_death_input_path')
-    roots['jobmon_logs_base'] = get_core_ref('jobmon_logs_base')
-    roots['gbd_round'] = get_core_ref('gbd_round_id')
-    roots['decomp_step'] = get_core_ref('decomp_step')
+        roots['j'] = ''
+        roots['h'] = ''
+        roots['k'] = ''
 
     return(roots)
 
-
-# def get_age_metadata():
-#     ''' Returns age group ids and names '''
-#     return(pd.DataFrame({'age_group_id' : [22, 5],
-#                         'age_group_name' : ['All Ages', '10-14']
-#                         }))
 
 roots = set_roots()

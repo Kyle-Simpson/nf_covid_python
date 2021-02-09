@@ -1,26 +1,66 @@
 import pandas as pd
 import numpy as np
-import datetime, copy
+import datetime, copy, os
+from nf_covid.utils.utils import get_core_ref, roots
 
 class Dataset():
-    def __init__(self, loc_id, loc_name, output_version, dst_type):
+    def __init__(self, loc_id, loc_name, output_version, dst_type, nf_type):
 
-        def init_data(dst_type, loc_id):
+        def init_data(self):
             ''' Collect input data '''
-            if dst_type in ['infections', 'deaths']:
-                df = pd.read_csv('/Users/Kyle/Desktop/data/{}.csv'.format(dst_type))
-                df = df[(df.location_id == loc_id)]
-            elif dst_type in ['hospital', 'icu']:
-                df = pd.read_csv('/Users/Kyle/Desktop/data/{}_admit.csv'.format(dst_type))
-            elif dst_type in ['long_midmod', 'long_hospital', 'long_icu']:
-                df = pd.read_csv('/Users/Kyle/Desktop/data/{}.csv'.format(dst_type))
-            
+            if self.nf_type == 'short' :
+                if self.dataset_type in ['infections', 'deaths']:
+                    df = pd.read_csv('{}daily_{}.csv'.format(roots['infect_death_input_path'], 
+                                                             self.dataset_type))
+                elif self.dataset_type in ['hospital_admit', 'icu_admit']:
+                    df = pd.read_csv('{}{}_{}/{}.csv'.format(roots['hsp_icu_input_path'], 
+                                                             self.loc_name, self.loc_id, 
+                                                             self.dataset_type))
+            else :
+                df = pd.read_csv('{}{}/stage_1/_for_long_covid/{}_{}_{}.csv'.format(get_core_ref('data_output', 'stage_1'), 
+                                                                                    self.output_version,
+                                                                                    self.loc_name, self.loc_id, 
+                                                                                    self.dataset_type))
+                
             # Make dates
-            df.date = [datetime.date(int(d.split('/')[2]),
-                                     int(d.split('/')[0]),
-                                     int(d.split('/')[1])) 
+            df.date = [datetime.date(int(d.split('-')[0]),
+                                     int(d.split('-')[1]),
+                                     int(d.split('-')[2])) 
                        for d in df.date]
             df.date = pd.to_datetime(df.date)
+            
+            # Reshape long if nf_type is long_covid
+            if self.nf_type == 'long':
+                if self.dataset_type == 'midmod':
+                    df = df.melt(id_vars=['location_id', 'age_group_id', 
+                                          'sex_id', 'date'])
+                    df = df.rename(columns={'variable' : 'draw_var', 
+                                            'value' : 'midmod_inc'})
+                elif self.dataset_type == 'hsp_admit':
+                    df = df.rename(columns={'variable' : 'msre'})
+                    df = df.melt(id_vars=['location_id', 'age_group_id', 
+                                           'sex_id', 'date', 'msre'])
+                    df = df.set_index(['location_id', 'age_group_id', 'sex_id', 
+                                       'date', 'variable', 'msre']).unstack(level=-1)
+                    df = df.reset_index()
+                    df['hospital_inc'] = df.value.hospital_inc
+                    df['hospital_deaths'] = df.value.hospital_deaths
+                    df = df.drop(columns='value')
+                    df = df.droplevel('msre', axis=1)
+                    df = df.rename(columns={'variable' : 'draw_var'})
+                else:
+                    df = df.rename(columns={'variable' : 'msre'})
+                    df = df.melt(id_vars=['location_id', 'age_group_id', 
+                                           'sex_id', 'date', 'msre'])
+                    df = df.set_index(['location_id', 'age_group_id', 'sex_id', 
+                                       'date', 'variable', 'msre']).unstack(level=-1)
+                    df = df.reset_index()
+                    df['icu_inc'] = df.value.icu_inc
+                    df['icu_deaths'] = df.value.icu_deaths
+                    df = df.drop(columns='value')
+                    df = df.droplevel('msre', axis=1)
+                    df = df.rename(columns={'variable' : 'draw_var'})
+            
             return(df.reset_index(drop=True))
 
 
@@ -28,8 +68,9 @@ class Dataset():
         self.loc_name = str(loc_name)
         self.output_version = str(output_version)
         self.dataset_type = str(dst_type)
+        self.nf_type = str(nf_type)
 
-        self.data = init_data(self.dataset_type, self.loc_id)
+        self.data = init_data(self)
 
 
     def collapse(self, agg_function='sum', group_cols=None, calc_cols=None):
@@ -42,7 +83,7 @@ class Dataset():
             group_cols = [group_cols]
         # Get all columns other than group_cols if no calc_cols given
         if not calc_cols:
-            calc_cols = [c for c in list(df) if c not in group_cols]
+            calc_cols = [c for c in list(self.data) if c not in group_cols]
         if isinstance(calc_cols, str):
             calc_cols = [calc_cols]
 
@@ -64,99 +105,6 @@ class Dataset():
         self.data = g.reset_index()
 
 
-    def wide_to_long(self, stubnames, i, j, drop_others=False):
-        ''' A convenience function to reshape a DataFrame wide to long. '''
-        df = self.data
-        
-        def get_varnames(df, stub):
-            return(df.filter(regex=stub).columns.tolist())
-
-        def melt_stub(df, stub, newVarNm):
-            varnames = get_varnames(df, stub)
-            # Use all cols as ids
-            ids = [c for c in df.columns.values if c not in varnames]
-            newdf = pd.melt(df, id_vars=ids, value_vars=varnames,
-                            value_name=stub, var_name=newVarNm)
-            # remove 'stub' from observations in 'newVarNm' columns, then
-            #   recast to int typeif numeric suffixes were used new
-            try:
-                if newdf[newVarNm].unique().str.isdigit().all():
-                    newdf[newVarNm] = newdf[newVarNm].str.replace(
-                        stub, '').astype(int)
-            except AttributeError:
-                newdf[newVarNm] = newdf[newVarNm].str.replace(stub, '').astype(str)
-            return newdf
-
-        # Error handling
-        if isinstance(i, str):
-            i = [i]
-        if isinstance(stubnames, str):
-            stubnames = [stubnames]
-        if isinstance(j, str):
-            j = [j]
-        if len(j) != len(stubnames):
-            raise ValueError("Stub list must be same length as j list.")
-        if any(map(lambda s: s in list(df), stubnames)):
-            raise ValueError("Stubname can't be identical to a column name.")
-        if df[i].duplicated().any():
-            raise ValueError("The id variables don't uniquely identify each row.")
-
-        # Start the reshaping (pop stub in prep for rewriting for multiple stubs)
-        stubcols = []
-        for s in stubnames:
-            stubcols +=  get_varnames(df, s)
-        non_stubs = [c for c in df.columns if c not in stubcols+i]
-        for pos, stub in enumerate(stubnames):
-            jval = j[pos]
-            temp_df = df.copy()
-            # Drop extra columns if requested
-            if drop_others:
-                temp_df = temp_df[i + get_varnames(df, stub)]
-            else:
-                temp_df = temp_df[i + get_varnames(df, stub) + non_stubs]
-            # add melted data to output dataframe 
-            if pos == 0:
-                newdf = melt_stub(temp_df, stub, jval)
-            else:
-                newdf = newdf.merge(melt_stub(temp_df, stub, jval))
-
-        self.data = newdf.reset_index(drop=True)
-
-
-    def long_to_wide(self, stub, i, j, drop_others=False):
-        ''' Convenience function to reshape DataFrame long to wide. '''
-        df = self.data
-        if isinstance(i, str):
-            i = [i]
-        # Error Checking
-        if df[i + [j]].duplicated().any():
-            raise ValueError("`i` and `j` don't uniquely identify each row.")
-        if df[j].isnull().any():
-            raise ValueError("`j` column has missing values. cannot reshape.")
-        if df[j].astype(str).str.isnumeric().all():
-            if df.loc[df[j] != df[j].astype(int), j].any():
-                print(
-                    "Decimal values cannot be used in reshape suffix. {} coerced to integer".format(j))
-            df.loc[:, j] = df[j].astype(int)
-        else:
-            df.loc[:, j] = df[j].astype(str)
-        # Perform reshape
-        if drop_others:
-            df = df[i + [j]]
-        else:
-            i = [x for x in list(df) if x not in [stub, j]]
-        df = df.set_index(i + [j]).unstack(fill_value=np.nan)
-        # Ensure all stubs and suffixes are strings and join them to make col names
-        cols = pd.Index(df.columns)
-        # for each s in each col in cols, e.g. cols = [(s, s1), (s, s2)]
-        cols = map(lambda col: map(lambda s: str(s), col), cols)
-        cols = [''.join(c) for c in cols]
-        # Set columns to the stub+suffix name and remove MultiIndex
-        df.columns = cols
-        df = df.reset_index()
-        self.data = df
-
-
     def check_neg(self, calc_cols, check_cols=None, add_cols=None):
         ''' Check for negative values in specified columns '''
         orig = copy.deepcopy(self.data)
@@ -167,8 +115,9 @@ class Dataset():
             self.data['location_name'] = self.loc_name
         if check_cols is None:
             check_cols = calc_cols
-        # if add_cols is not None:
-        #     df = [df[col] = add_cols[col] for col in add_cols.columns]
+        if add_cols is not None:
+            for col in add_cols.keys():
+                self.data[col] = add_cols[col]
         
         # Take mean of calc_cols by location_id, location_name, age_group_id, sex_id
         self.collapse(agg_function='mean', group_cols=['location_id', 'location_name', 
@@ -177,10 +126,47 @@ class Dataset():
 
         for col in check_cols:
             if min(self.data[col]) < 0:
-                self.data[col] = 0
                 issues = self.data[(self.data[col] < 0)]
-                # raise ValueError('Negative values in {}'.format(col))
-            else:
-                print('No negatives in {}'.format(col))
+                issues.to_csv('{}{}/nf_covid_{}/errors/{}_cov_{}_{}_errors.csv'.format(roots['jobmon_logs_base'], self.output_version.split('.')[0], 
+                                                                                      self.output_version, self.nf_type, self.loc_id, col),
+                             )
+                raise ValueError('Negative values in {}'.format(col))
 
         self.data = orig
+        
+        
+    def save_data(self, output_cols, filename, stage):
+        ''' Save out dataset and run diagnostics '''
+
+        df = self.data[output_cols]
+        
+
+        # Check for squareness
+        
+        
+        # Pull output filepath
+        out_loc = '{}{}/{}/{}_{}/'.format(get_core_ref('data_output', stage), 
+                                          self.output_version, stage, self.loc_name, 
+                                          self.loc_id)
+        
+        
+        # Ensure output filepath exists
+        os.makedirs(out_loc, exist_ok=True)
+        os.makedirs('{}diagnostics/'.format(out_loc), exist_ok=True)
+        
+        
+        # Output csv
+        df.to_csv('{}{}.csv'.format(out_loc, filename), index=False)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
